@@ -42,7 +42,8 @@ REMOVE_COUNT=$(echo "$GIT_DIFF" | grep ^- | grep @ts-nocheck | wc -l)
 
 if [[ $ADD_COUNT > $REMOVE_COUNT ]]; then
   DIFF_COUNT=`expr $ADD_COUNT - $REMOVE_COUNT`
-  echo "Oh no! This PR introduces $DIFF_COUNT new @ts-nocheck instance(s) :("
+  echo -e "Oh no! This PR introduces $DIFF_COUNT new @ts-nocheck instance(s) :(\n\n"
+  echo "PS. if your PR hasn't introduced any new @ts-nocheck instance(s), please sync with master branch first (and this shall start passing)."
   exit 1
 fi
 
