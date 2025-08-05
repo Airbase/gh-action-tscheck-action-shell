@@ -4,6 +4,7 @@ set -e
 
 # Use environment variable if available, otherwise extract from GitHub event
 if [[ -z "$PR_NUMBER" || "$PR_NUMBER" == "null" ]]; then
+  echo "Have not received PR_NUMBER env value."
   PR_NUMBER=$(jq -r ".pull_request.number // .issue.number // empty" "$GITHUB_EVENT_PATH")
   
   if [[ -z "$PR_NUMBER" || "$PR_NUMBER" == "null" ]]; then
