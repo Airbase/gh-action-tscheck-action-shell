@@ -37,9 +37,8 @@ git checkout $BASE_BRANCH && git pull
 git checkout $HEAD_BRANCH && git pull
 
 GIT_DIFF=$(git diff $BASE_BRANCH $HEAD_BRANCH -- '***.ts' '***.tsx')
-# Remove string literals first, then check for @ts-nocheck in comments
-ADD_COUNT=$(echo "$GIT_DIFF" | grep ^+ | sed 's/"[^"]*"//g' | sed "s/'[^']*'//g" | sed 's/`[^`]*`//g' | grep -E '(//|/\*)\s*@ts-nocheck' | wc -l)
-REMOVE_COUNT=$(echo "$GIT_DIFF" | grep ^- | sed 's/"[^"]*"//g' | sed "s/'[^']*'//g" | sed 's/`[^`]*`//g' | grep -E '(//|/\*)\s*@ts-nocheck' | wc -l)
+ADD_COUNT=$(echo "$GIT_DIFF" | grep ^+ | grep -E '(//|/\*) @ts-nocheck' | wc -l)
+REMOVE_COUNT=$(echo "$GIT_DIFF" | grep ^- | grep -E '(//|/\*) @ts-nocheck' | wc -l)
 
 if [[ $ADD_COUNT > $REMOVE_COUNT ]]; then
   DIFF_COUNT=`expr $ADD_COUNT - $REMOVE_COUNT`
