@@ -40,7 +40,7 @@ GIT_DIFF=$(git diff $BASE_BRANCH $HEAD_BRANCH -- '***.ts' '***.tsx')
 ADD_COUNT=$(echo "$GIT_DIFF" | grep ^+ | grep -E '(//|/\*) @ts-nocheck' | wc -l)
 REMOVE_COUNT=$(echo "$GIT_DIFF" | grep ^- | grep -E '(//|/\*) @ts-nocheck' | wc -l)
 
-if [[ $ADD_COUNT > $REMOVE_COUNT ]]; then
+if [[ $ADD_COUNT -gt $REMOVE_COUNT ]]; then
   DIFF_COUNT=`expr $ADD_COUNT - $REMOVE_COUNT`
   echo -e "Oh no! This PR introduces $DIFF_COUNT new @ts-nocheck instance(s) :(\n\n"
   echo "PS. if your PR hasn't introduced any new @ts-nocheck instance(s), please sync with master branch first (and this shall start passing)."
