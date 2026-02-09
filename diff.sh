@@ -37,8 +37,8 @@ git checkout $BASE_BRANCH && git pull
 git checkout $HEAD_BRANCH && git pull
 
 GIT_DIFF=$(git diff $BASE_BRANCH $HEAD_BRANCH -- '***.ts' '***.tsx')
-ADD_COUNT=$(echo "$GIT_DIFF" | grep ^+ | grep @ts-nocheck | wc -l)
-REMOVE_COUNT=$(echo "$GIT_DIFF" | grep ^- | grep @ts-nocheck | wc -l)
+ADD_COUNT=$(echo "$GIT_DIFF" | grep ^+ | grep -E '^\+[^"'\''`]*(/\*|//)\s*@ts-nocheck' | wc -l)
+REMOVE_COUNT=$(echo "$GIT_DIFF" | grep ^- | grep -E '^\-[^"'\''`]*(/\*|//)\s*@ts-nocheck' | wc -l)
 
 if [[ $ADD_COUNT > $REMOVE_COUNT ]]; then
   DIFF_COUNT=`expr $ADD_COUNT - $REMOVE_COUNT`
