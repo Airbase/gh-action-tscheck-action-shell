@@ -3,6 +3,7 @@
 set -euo pipefail
 
 get_pr_number() {
+  # Prefer the workflow-provided PR number so merge queue callers can pass it explicitly.
   if [[ -n "${PR_NUMBER:-}" && "${PR_NUMBER}" != "null" ]]; then
     echo "${PR_NUMBER}"
     return
@@ -50,11 +51,13 @@ get_pr_response() {
 ensure_base_branch_history() {
   local base_branch="$1"
 
+  # Detached or shallow GitHub checkouts may not have enough history for merge-base.
   if [[ "$(git rev-parse --is-shallow-repository)" == "true" ]]; then
     echo "Repository is shallow; fetching full history for the current checkout..."
     git fetch --no-tags --prune --unshallow origin
   fi
 
+  # Fetch the base branch into a stable remote-tracking ref without changing HEAD.
   echo "Fetching base branch history for ${base_branch}..."
   git fetch --no-tags origin "refs/heads/${base_branch}:refs/remotes/origin/${base_branch}"
 }
@@ -80,6 +83,7 @@ resolve_base_ref() {
 get_merge_base() {
   local base_ref="$1"
 
+  # Use fork-point when possible so rebased branches diff from the right ancestor.
   git merge-base --fork-point "${base_ref}" HEAD 2>/dev/null || git merge-base "${base_ref}" HEAD
 }
 
@@ -87,6 +91,7 @@ count_ts_nocheck_occurrences() {
   local diff_prefix="$1"
   local diff_content="$2"
 
+  # Only count added/removed diff lines that contain an actual ts-nocheck comment marker.
   printf '%s\n' "${diff_content}" | awk -v diff_prefix="${diff_prefix}" '
     index($0, diff_prefix) == 1 && $0 ~ /(\/\/|\/\*) @ts-nocheck/ { count++ }
     END { print count + 0 }
@@ -118,6 +123,7 @@ main() {
   local merge_base
   merge_base=$(get_merge_base "${base_ref}")
 
+  # Diff from merge-base to HEAD so stale base-branch commits are not treated as PR changes.
   echo "Comparing TypeScript changes from merge-base ${merge_base} to HEAD..."
 
   local git_diff
