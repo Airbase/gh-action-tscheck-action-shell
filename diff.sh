@@ -1,51 +1,165 @@
 #!/bin/bash
 
-set -e
+set -euo pipefail
 
-# Use environment variable if available, otherwise extract from GitHub event
-if [[ -z "$PR_NUMBER" || "$PR_NUMBER" == "null" ]]; then
-  echo "Have not received PR_NUMBER env value."
-  PR_NUMBER=$(jq -r ".pull_request.number // .issue.number // empty" "$GITHUB_EVENT_PATH")
-  
-  if [[ -z "$PR_NUMBER" || "$PR_NUMBER" == "null" ]]; then
+get_pr_number() {
+  # Prefer the workflow-provided PR number so merge queue callers can pass it explicitly.
+  if [[ -n "${PR_NUMBER:-}" && "${PR_NUMBER}" != "null" ]]; then
+    echo "${PR_NUMBER}"
+    return
+  fi
+
+  echo "Have not received PR_NUMBER env value." >&2
+
+  if [[ -z "${GITHUB_EVENT_PATH:-}" ]]; then
+    echo "GITHUB_EVENT_PATH is not set, so the PR number cannot be determined."
+    exit 1
+  fi
+
+  local pr_number
+  pr_number=$(jq -r ".pull_request.number // .issue.number // empty" "${GITHUB_EVENT_PATH}")
+
+  if [[ -z "${pr_number}" || "${pr_number}" == "null" ]]; then
     echo "Failed to determine PR Number."
     exit 1
   fi
-fi
 
-echo "Collecting information about PR #$PR_NUMBER of $GITHUB_REPOSITORY..."
+  echo "${pr_number}"
+}
 
-API_URI=https://api.github.com
-API_HEADER="Accept: application/vnd.github.v3+json"
-AUTH_HEADER="Authorization: token $GITHUB_TOKEN"
+get_pr_response() {
+  local pr_number="$1"
 
-PR_RESP=$(curl -X GET -s -H "${AUTH_HEADER}" -H "${API_HEADER}" \
-  "${API_URI}/repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER")
+  if [[ -z "${GITHUB_REPOSITORY:-}" ]]; then
+    echo "GITHUB_REPOSITORY is not set."
+    exit 1
+  fi
 
-BASE_BRANCH=$(echo "$PR_RESP" | jq -r .base.ref)
-HEAD_BRANCH=$(echo "$PR_RESP" | jq -r .head.ref)
+  if [[ -z "${GITHUB_TOKEN:-}" ]]; then
+    echo "GITHUB_TOKEN is not set."
+    exit 1
+  fi
 
-if [[ -z "$BASE_BRANCH" ]]; then
-  echo "Cannot get base branch information for PR #$PR_NUMBER!"
+  local api_uri="https://api.github.com"
+  local api_header="Accept: application/vnd.github.v3+json"
+  local auth_header="Authorization: token ${GITHUB_TOKEN}"
+
+  curl -X GET -s -H "${auth_header}" -H "${api_header}" \
+    "${api_uri}/repos/${GITHUB_REPOSITORY}/pulls/${pr_number}"
+}
+
+ensure_base_branch_history() {
+  local base_branch="$1"
+
+  # Fetch the base branch into a stable remote-tracking ref without changing HEAD.
+  echo "Fetching base branch history for ${base_branch}..." >&2
+  git fetch --no-tags origin "refs/heads/${base_branch}:refs/remotes/origin/${base_branch}"
+}
+
+resolve_base_ref() {
+  local base_branch="$1"
+  local remote_ref="refs/remotes/origin/${base_branch}"
+
+  if git rev-parse --verify "${remote_ref}" >/dev/null 2>&1; then
+    echo "${remote_ref}"
+    return
+  fi
+
+  if git rev-parse --verify "${base_branch}" >/dev/null 2>&1; then
+    echo "${base_branch}"
+    return
+  fi
+
+  echo "Cannot find a local ref for base branch ${base_branch}."
   exit 1
-fi
+}
 
-# set -o xtrace
+find_merge_base() {
+  local base_ref="$1"
 
-git fetch
-git checkout $BASE_BRANCH && git pull
-git checkout $HEAD_BRANCH && git pull
+  # Use fork-point when possible so rebased branches diff from the right ancestor.
+  git merge-base --fork-point "${base_ref}" HEAD 2>/dev/null || git merge-base "${base_ref}" HEAD
+}
 
-GIT_DIFF=$(git diff $BASE_BRANCH $HEAD_BRANCH -- '***.ts' '***.tsx')
-ADD_COUNT=$(echo "$GIT_DIFF" | grep ^+ | grep -E '(//|/\*) @ts-nocheck' | wc -l)
-REMOVE_COUNT=$(echo "$GIT_DIFF" | grep ^- | grep -E '(//|/\*) @ts-nocheck' | wc -l)
+get_merge_base() {
+  local base_ref="$1"
+  local base_branch="$2"
+  local merge_base
 
-if [[ $ADD_COUNT -gt $REMOVE_COUNT ]]; then
-  DIFF_COUNT=`expr $ADD_COUNT - $REMOVE_COUNT`
-  echo -e "Oh no! This PR introduces $DIFF_COUNT new @ts-nocheck instance(s) :(\n\n"
-  echo "PS. if your PR hasn't introduced any new @ts-nocheck instance(s), please sync with master branch first (and this shall start passing)."
+  if merge_base=$(find_merge_base "${base_ref}"); then
+    echo "${merge_base}"
+    return
+  fi
+
+  if [[ "$(git rev-parse --is-shallow-repository)" == "true" ]]; then
+    echo "Could not resolve merge-base from shallow history; fetching more history..." >&2
+    git fetch --no-tags --prune --unshallow origin
+    ensure_base_branch_history "${base_branch}"
+    if merge_base=$(find_merge_base "${base_ref}"); then
+      echo "${merge_base}"
+      return
+    fi
+  fi
+
+  echo "Cannot determine merge-base between ${base_ref} and HEAD." >&2
   exit 1
-fi
+}
 
-echo "No new @ts-nocheck instance(s) introduced! :)"
-exit 0
+count_ts_nocheck_occurrences() {
+  local diff_prefix="$1"
+  local diff_content="$2"
+
+  # Only count added/removed diff lines that contain an actual ts-nocheck comment marker.
+  printf '%s\n' "${diff_content}" | awk -v diff_prefix="${diff_prefix}" '
+    index($0, diff_prefix) == 1 && $0 ~ /(\/\/|\/\*) @ts-nocheck/ { count++ }
+    END { print count + 0 }
+  '
+}
+
+main() {
+  local pr_number
+  pr_number=$(get_pr_number)
+
+  echo "Collecting information about PR #${pr_number} of ${GITHUB_REPOSITORY:-unknown repository}..."
+
+  local pr_response
+  pr_response=$(get_pr_response "${pr_number}")
+
+  local base_branch
+  base_branch=$(printf '%s' "${pr_response}" | jq -r '.base.ref')
+
+  if [[ -z "${base_branch}" || "${base_branch}" == "null" ]]; then
+    echo "Cannot get base branch information for PR #${pr_number}!"
+    exit 1
+  fi
+
+  ensure_base_branch_history "${base_branch}"
+
+  local base_ref
+  base_ref=$(resolve_base_ref "${base_branch}")
+
+  local merge_base
+  merge_base=$(get_merge_base "${base_ref}" "${base_branch}")
+
+  # Diff from merge-base to HEAD so stale base-branch commits are not treated as PR changes.
+  echo "Comparing TypeScript changes from merge-base ${merge_base} to HEAD..."
+
+  local git_diff
+  git_diff=$(git diff "${merge_base}" HEAD -- '*.ts' '*.tsx')
+
+  local add_count
+  add_count=$(count_ts_nocheck_occurrences "+" "${git_diff}")
+
+  local remove_count
+  remove_count=$(count_ts_nocheck_occurrences "-" "${git_diff}")
+
+  if [[ "${add_count}" -gt "${remove_count}" ]]; then
+    local diff_count=$((add_count - remove_count))
+    echo -e "Oh no! This PR introduces ${diff_count} new @ts-nocheck instance(s) :(\n"
+    exit 1
+  fi
+
+  echo "No new @ts-nocheck instance(s) introduced! :)"
+}
+
+main "$@"

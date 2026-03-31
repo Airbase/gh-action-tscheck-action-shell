@@ -1,0 +1,12 @@
+{
+  "name": "gh-action-tscheck-action-shell",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node tests/diff_test.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^24.5.2",
+    "typescript": "^6.0.2"
+  }
+}
