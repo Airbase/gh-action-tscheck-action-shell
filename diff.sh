@@ -9,7 +9,7 @@ get_pr_number() {
     return
   fi
 
-  echo "Have not received PR_NUMBER env value."
+  echo "Have not received PR_NUMBER env value." >&2
 
   if [[ -z "${GITHUB_EVENT_PATH:-}" ]]; then
     echo "GITHUB_EVENT_PATH is not set, so the PR number cannot be determined."
@@ -51,14 +51,8 @@ get_pr_response() {
 ensure_base_branch_history() {
   local base_branch="$1"
 
-  # Detached or shallow GitHub checkouts may not have enough history for merge-base.
-  if [[ "$(git rev-parse --is-shallow-repository)" == "true" ]]; then
-    echo "Repository is shallow; fetching full history for the current checkout..."
-    git fetch --no-tags --prune --unshallow origin
-  fi
-
   # Fetch the base branch into a stable remote-tracking ref without changing HEAD.
-  echo "Fetching base branch history for ${base_branch}..."
+  echo "Fetching base branch history for ${base_branch}..." >&2
   git fetch --no-tags origin "refs/heads/${base_branch}:refs/remotes/origin/${base_branch}"
 }
 
@@ -80,11 +74,35 @@ resolve_base_ref() {
   exit 1
 }
 
-get_merge_base() {
+find_merge_base() {
   local base_ref="$1"
 
   # Use fork-point when possible so rebased branches diff from the right ancestor.
   git merge-base --fork-point "${base_ref}" HEAD 2>/dev/null || git merge-base "${base_ref}" HEAD
+}
+
+get_merge_base() {
+  local base_ref="$1"
+  local base_branch="$2"
+  local merge_base
+
+  if merge_base=$(find_merge_base "${base_ref}"); then
+    echo "${merge_base}"
+    return
+  fi
+
+  if [[ "$(git rev-parse --is-shallow-repository)" == "true" ]]; then
+    echo "Could not resolve merge-base from shallow history; fetching more history..." >&2
+    git fetch --no-tags --prune --unshallow origin
+    ensure_base_branch_history "${base_branch}"
+    if merge_base=$(find_merge_base "${base_ref}"); then
+      echo "${merge_base}"
+      return
+    fi
+  fi
+
+  echo "Cannot determine merge-base between ${base_ref} and HEAD." >&2
+  exit 1
 }
 
 count_ts_nocheck_occurrences() {
@@ -121,7 +139,7 @@ main() {
   base_ref=$(resolve_base_ref "${base_branch}")
 
   local merge_base
-  merge_base=$(get_merge_base "${base_ref}")
+  merge_base=$(get_merge_base "${base_ref}" "${base_branch}")
 
   # Diff from merge-base to HEAD so stale base-branch commits are not treated as PR changes.
   echo "Comparing TypeScript changes from merge-base ${merge_base} to HEAD..."
