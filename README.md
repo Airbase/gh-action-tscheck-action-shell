@@ -22,5 +22,5 @@ The action fetches the base branch ref it needs before computing the merge-base,
 Run the regression tests locally with:
 
 ```bash
-bash tests/diff_test.sh
+node tests/diff_test.ts
 ```
