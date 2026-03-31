@@ -1,5 +1,5 @@
 name: 'No new @ts-nocheck'
-description: 'Runs git diff against the base branch and checks if new @ts-nochecks are added.'
+description: 'Runs a merge-base diff against the PR base branch and checks if new @ts-nochecks are added.'
 author: 'Tanmay Rajani'
 branding:
   icon: 'shield'
